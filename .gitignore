@@ -1,0 +1,27 @@
+# Dependencies
+node_modules/
+
+# Build output (should be rebuilt from source)
+# lib/ is included in npm pack, but we can rebuild it
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Temporary files
+*.tmp
+*.temp
+
+# Lock files (optional, include if you want reproducible installs)
+# pnpm-lock.yaml
+# package-lock.json
+
+# TypeScript cache
+*.tsbuildinfo

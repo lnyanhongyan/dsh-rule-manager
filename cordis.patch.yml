@@ -1,0 +1,8 @@
+# dsh-rule-manager bundle patch: inserts the dual-face plugin row into the web
+# profile roster. The node half (exports ".") runs in the host process and
+# registers /rules/* HTTP routes; the dsh.client declaration makes the browser
+# half (exports "./client", served at /plugins/<id>/client.js) load in the web GUI.
+# Install with: dsh plugin --profile <name> add @deepseek-ai/dsh-rule-manager
+- insert:
+    - id: rule-manager
+      name: '@deepseek-ai/dsh-rule-manager'
