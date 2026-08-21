@@ -24,7 +24,7 @@ async function post(path: string, payload: unknown): Promise<{ ok: boolean; valu
     const envelope: unknown = await response.json()
     if (typeof envelope !== 'object' || envelope === null) return { ok: false, error: 'bad response' }
     const record = envelope as { ok?: boolean; value?: unknown; error?: string }
-    if (record.ok === true) return { ok: true, value: record.value }
+    if (record.ok === true) return { ok: true, value: record.value ?? record }
     return { ok: false, error: record.error ?? 'rules route error' }
   } catch {
     return { ok: false, error: 'bad response' }

@@ -111,26 +111,76 @@ class RuleStore {
     return w.cwd ?? w.path ?? ''
   }
 
-  private async listFilesTexts(rulesDir: string): Promise<string> {
-    const files = await this.listRuleFiles(rulesDir)
-    const parts: string[] = []
-    for (const file of files) {
-      const target = await this.fs.resolve(file.path)
-      const content = await this.fs.readText(target).catch(() => '')
-      const heading = content.trim().startsWith('#')
-        ? content.trimEnd()
-        : `# ${file.name.replace(/\.md$/i, '')}\n\n${content}`.trimEnd()
-      parts.push(heading)
+  /**
+   * Parse a rule file's optional YAML front-matter block.
+   *
+   * A rule file may start with a `---`-delimited block:
+   *   ---
+   *   when: 当需要访问外部网络资源时参考此规则
+   *   ---
+   *   # 规则正文
+   * ...
+   * Returns the extracted `when` hint (or the fallback) plus the body text.
+   */
+  private parseRule(fileName: string, content: string): { hint: string; body: string } {
+    const base = fileName.replace(/\.md$/i, '')
+    const trimmed = content.replace(/^\uFEFF/, '')
+    // Strip a leading front-matter block between two `---` lines.
+    const fm = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?/.exec(trimmed)
+    let hint = ''
+    let body = trimmed
+    if (fm) {
+      const meta = fm[1]
+      const when = /(?:^|\n)\s*when\s*:\s*(.+?)\s*(?:\r?\n|$)/.exec(meta)
+      if (when) hint = when[1].replace(/^["']|["']$/g, '').trim()
+      body = trimmed.slice(fm[0].length)
     }
-    return parts.join('\n\n')
+    // Fallback hint: first heading, else the file base name.
+    if (!hint) {
+      const head = /^\s*#+\s+(.+?)\s*(?:\r?\n|$)/.exec(body)
+      hint = head ? head[1].trim() : base
+    }
+    const text = body.trim()
+    return { hint, body: text.startsWith('#') ? text : `# ${base}\n\n${text}` }
   }
 
   /**
-   * Re-aggregate every rule file under `rulesDir` into `targetAgentsMd` (AGENTS.md).
-   * Creates the rules/ dir + AGENTS.md as needed. Returns false on failure.
+   * Build the AGENTS.md index for every rule file under `rulesDir`.
+   * Unlike inlining the full rule bodies, the index only records each rule's
+   * name, a `when` trigger hint (from front-matter or the first heading), and
+   * the rule file's ABSOLUTE path — so the model prompt stays lean while an
+   * agent (whose session cwd may differ) can still locate and read the rule
+   * file regardless of its working directory.
+   */
+  private async buildIndex(rulesDir: string): Promise<string> {
+    const files = await this.listRuleFiles(rulesDir)
+    if (files.length === 0) return ''
+    const entries: string[] = []
+    for (const file of files) {
+      const target = await this.fs.resolve(file.path)
+      const content = await this.fs.readText(target).catch(() => '')
+      const { hint } = this.parseRule(file.name, content)
+      // file.path is an absolute filesystem path (processPath of the resolved target).
+      const abs = this.fs.processPath(target)
+      entries.push(`- **${file.name}**\n  - 触发：${hint}\n  - 位置：\`${abs}\`\n  - 规则：当满足上述触发条件时，读取 \`${abs}\` 的完整内容后再执行。`)
+    }
+    return [
+      '# 规则索引',
+      '',
+      '本仓库的规则以独立 .md 文件存放于各作用域的 `rules/` 目录（全局在 `{DSH_HOME}/rules/`，项目在工作区根 `rules/`）。下列「位置」为规则的**绝对路径**，与本会话当前工作目录无关，请直接按该路径读取完整内容，再按其要求执行。',
+      '',
+      ...entries,
+      '',
+    ].join('\n')
+  }
+
+  /**
+   * Re-aggregate every rule file under `rulesDir` into `targetAgentsMd` (AGENTS.md)
+   * as an index of trigger hints (not the full rule bodies). Creates the rules/
+   * dir + AGENTS.md as needed. Returns false on failure.
    */
   async aggregate(rulesDir: string, targetAgentsMd: string, policy: unknown): Promise<boolean> {
-    const text = await this.listFilesTexts(rulesDir)
+    const text = await this.buildIndex(rulesDir)
     try {
       const target = await this.fs.resolve(targetAgentsMd)
       const out = await this.fs.writeText(target, text, undefined, undefined, policy).catch(() => null)
@@ -220,7 +270,8 @@ function registerRules(ctx: Context, store: RuleStore, shell: ShellLike | undefi
         json(res, { ok: false, error: 'missing dir or name' })
         return
       }
-      json(res, await store.read(dir, name))
+      const result = await store.read(dir, name)
+      json(res, result.ok ? { ok: true, value: { content: result.content } } : result)
       return
     }
     if (pathname === '/rules/write') {
